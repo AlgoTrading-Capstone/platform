@@ -44,11 +44,13 @@ and, of course, exit existing positions.
    - Basic positive/negative sentiment
 
 ### 2. RL-Based Decision Engine
-- Above the strategy services sits a **Reinforcement Learning (RL)** engine that chooses the final action.
-- Current preferred RL engine: **FinRL** (because it is finance-oriented and supports standard algorithms like PPO/A2C/SAC).
-- The RL environment will be customized so that its **observation** is essentially “what all strategies said right now” plus a few global fields (e.g. current position, volatility).
-- The RL **action space** will be a **limited, predefined set** of actions (e.g. increase exposure, decrease exposure, stay flat, possibly reverse). We are **not** locking to “always buy/sell full position”.
-- Whenever a **new strategy** is added to the system, the RL model will be **retrained** so it can learn all permutations/combinations of the available strategies.
+- Above the strategy services sits a **Reinforcement Learning (RL)** engine that chooses the final action.  
+- We will conduct a **dedicated research phase** to determine which **RL algorithm** (e.g., PPO, A2C, SAC, DDPG, etc.) best fits our problem characteristics and available data.  
+- A separate study will be performed on how to optimally define the **Action**, **State**, and **Reward** spaces to reflect real trading dynamics and avoid overfitting.  
+- The current plan is to use **FinRL** as the main RL framework, given its finance-oriented environments and built-in support for multiple algorithms.  
+- The RL environment will be customized so that its **observation** is essentially “what all strategies said right now” plus a few global fields (e.g., current position, volatility).  
+- The RL **action space** will be a **limited, predefined set** of actions (e.g., increase exposure, decrease exposure, stay flat, possibly reverse). We are **not** locking to “always buy/sell full position.”  
+- Whenever a **new strategy** is added to the system, the RL model will be **retrained** so it can learn all permutations/combinations of the available strategies.  
 - There will also be **periodic retraining** (daily/weekly) to re-align the meta-strategy with current market conditions.
 
 ### 3. Exchange Integration
@@ -76,9 +78,10 @@ and, of course, exit existing positions.
 ---
 
 ## Not Yet Finalized
-- **Strategy output schema**: we know it must be unified, but exact fields (e.g. confidence, horizon) are not fixed yet.
-- **Exact action set** for the RL: we will use a small, fixed action space, but the precise actions are still to be defined.
-- **Risk controls**: max position, daily loss caps, etc. have **not** been defined yet — this will be added once the basic loop runs.
+- **Strategy output schema**: we know it must be unified, but exact fields (e.g. confidence, horizon) are not fixed yet.  
+- **RL research phase**: we will perform a dedicated research phase to determine which **Reinforcement Learning algorithm** (e.g., PPO, A2C, SAC, DDPG, etc.) best fits our trading framework.  
+- **RL environment design**: we will also study how to optimally define the **Action**, **State**, and **Reward** spaces to ensure effective learning and prevent overfitting.  
+- **Risk controls**: max position, daily loss caps, etc. have **not** been defined yet — this will be added once the basic loop runs.  
 
 ---
 
@@ -109,5 +112,6 @@ This document is meant to give LLMs full context about:
 - what components already exist conceptually,
 - which tools/libraries have been chosen,
 - and which parts are intentionally *not* finalized yet.
+
 
 It should be used as a high-level description of the system’s architecture and intent, not as a final implementation spec.
