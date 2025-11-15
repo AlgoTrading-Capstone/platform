@@ -43,6 +43,31 @@ and, of course, exit existing positions.
    - Spikes in BTC mentions  
    - Basic positive/negative sentiment
 
+#### Strategies Already Selected for POC Implementation
+
+1. **Volatility System (Technical / ATR-based)**
+The first strategy selected for implementation. Uses volatility expansion via resampled ATR and absolute price changes to detect breakout conditions.
+
+#### Tick & Timeframe Management
+
+- The system's global evaluation frequency is determined by MIN_TIMEFRAME, the shortest timeframe among all active strategies.
+- A global tick occurs every time a MIN_timeframe candle closes.
+- Each strategy receives a tick at every MIN interval, but:
+   - Strategies whose timeframe does not align with the current tick return HOLD / NO_ACTION (or similar neutral output).
+   - Strategies whose candle timeframe does align compute indicators and produce a signal.
+
+#### Centralized Data Management
+
+- The system stores only MIN_TIMEFRAME raw candles in the database (e.g., if the smallest strategy timeframe is 5m → store 5m candles).
+- Each strategy declares:
+   - Its timeframe (e.g., "1h", "15m").
+   - Its required lookback window (number of candles it needs in its own timeframe).
+- The system computes the total amount of raw candles to keep.
+- Before running any strategy:
+   - The Data Orchestrator loads the raw MIN candles from the DB.
+   - Resamples them to each strategy’s required timeframe.
+   - Extracts exactly lookback_n candles.
+
 ### 2. RL-Based Decision Engine
 - Above the strategy services sits a **Reinforcement Learning (RL)** engine that chooses the final action.  
 - We will conduct a **dedicated research phase** to determine which **RL algorithm** (e.g., PPO, A2C, SAC, DDPG, etc.) best fits our problem characteristics and available data.  
@@ -106,12 +131,26 @@ and, of course, exit existing positions.
 
 ---
 
+## Algorithm POC Environment & Setup
+
+A Proof-of-Concept (POC) implementation of the algorithmic engine has begun.  
+The initial development environment and project structure are defined as follows:
+
+### Development Environment
+- **IDE:** PyCharm (Professional)
+- **Python Version:** 3.11.7  
+- **Virtual Environment:** `.venv` created and managed directly through PyCharm (no external conda/poetry).
+- **Dependency Policy:**  
+  - Install all packages via PyCharm’s package management GUI.  
+  - Avoid external environment managers unless required for production later on.
+
+---
+
 ## Purpose of this Document
 This document is meant to give LLMs full context about:
 - what the project is trying to achieve,
 - what components already exist conceptually,
 - which tools/libraries have been chosen,
 - and which parts are intentionally *not* finalized yet.
-
 
 It should be used as a high-level description of the system’s architecture and intent, not as a final implementation spec.
