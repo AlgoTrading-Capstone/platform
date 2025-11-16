@@ -145,7 +145,13 @@ The initial development environment and project structure are defined as follows
   - Avoid external environment managers unless required for production later on.
 
 ---
+## Database Infrastructure
 
+- **PostgreSQL 16.11** with **TimescaleDB 2.23.1** extension
+- Time-series optimizations: hypertables, resampling, 90% compression
+- ACID-compliant for orders/metadata + time-series performance for OHLCV candles
+- Python: **psycopg2-binary 2.9.9**, **SQLAlchemy 2.0.23**
+---
 ## Purpose of this Document
 This document is meant to give LLMs full context about:
 - what the project is trying to achieve,
