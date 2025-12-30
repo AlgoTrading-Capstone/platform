@@ -1,26 +1,86 @@
-# Meta-Level Strategy for Managing Multiple Bitcoin Trading Strategies
+# AlgoTrading Capstone (Bitcoin RL) – Current Project Context
 
-## Concept
-This project defines a **meta-level (top) strategy** that manages and coordinates several independent Bitcoin trading strategies. Each strategy runs separately (as a microservice or module), produces its own trading recommendation, and the meta-strategy decides how to combine these recommendations into a single trading action.
-
-The target market is **Bitcoin futures** so that the system can:
-- go long,
-- go short,
-- stay flat/hold,
-and, of course, exit existing positions.
+## Why this file exists
+This Markdown is a **high-level, up-to-date context snapshot** for AI tools working on the project.  
+It focuses on **what is implemented today**, the **key contracts** between components, and the **planned integration path**.
 
 ---
 
-## Main Components
+## Current reality: two working codebases
 
-### 1. Strategy Services (Microservices)
-- Each trading idea/logic is implemented as an independent strategy service (Python-based).
-- Strategies will be sourced from existing, proven open-source algo-trading codebases (after manual review).
-- Each strategy is called at runtime and returns a structured **recommendation** for the current time step.
-- We have **not** finalized the exact output schema of a strategy yet — only that it will be unified so the meta-engine can consume it.
-- The purpose is to combine *already working* or *already defined* strategies, not to reinvent every signal from scratch.
+### A. Bitcoin RL Training Engine (offline, CLI)
+**Goal:** produce trained RL policies + backtests from historical data.  
+**Runs on:** developer machines (local CPU/GPU), not as a server.  
+**Outputs:** model artifacts (actor checkpoint), run metadata, evaluation metrics, and backtest artifacts.
 
-#### Strategy Candidates (to be wrapped as microservices)
+### B. Bitcoin Trading Strategy Execution System (runtime, server-side)
+**Goal:** operate as a long-lived service (target: AWS 24/7) that maintains a rolling OHLCV window in TimescaleDB and periodically runs strategies to emit signals.  
+**Current behavior:** signal generation + scheduling; **no live trade execution yet**.
+
+---
+
+## A. RL Training Engine – what exists now
+
+### Responsibilities
+- **Data pipeline** that downloads and prepares historical BTC data (CCXT-based), including feature engineering and strategy signal generation.
+- **Custom RL environment** (`BitcoinTradingEnv`) that models portfolio evolution, position constraints, fees, stop-loss logic, and reward shaping.
+- **Training** using a vendored ElegantRL stack (e.g., PPO/SAC), driven by a single CLI orchestrator (`main.py`).
+- **Backtesting & reporting**: produces `steps.csv`, `trades.csv`, `metrics.json`, `summary.json`, and plots per run/backtest.
+
+### Key contracts (must stay stable for deployment compatibility)
+**State vector composition (high level):**
+- Portfolio state (balance/holdings)
+- Market features (OHLCV + technical indicators)
+- Risk features (turbulence / optional external series like VIX)
+- **Strategy signals** encoded consistently (one-hot per strategy per signal type)
+- Normalization rules are part of the contract.
+
+**Action space (current):** continuous `[-1, 1]` with two components:
+- `a_pos`: desired exposure (direction + magnitude)
+- `a_sl`: stop-loss tightness control
+
+**Trade constraints (examples):** leverage limit, max BTC position cap, transaction fee/slippage, exposure deadzone, stop-loss bounds.
+
+### Outputs and run structure
+Training runs are organized under a run directory that contains:
+- `metadata.json` (the “model contract”: indicator list, strategy list/order, env/training parameters, etc.)
+- `elegantrl/act.pth` (actor checkpoint) and related training artifacts
+- `backtests/` subfolders with backtest outputs and plots
+
+---
+
+## B. Strategy Execution System – what exists now
+
+### Responsibilities
+- **Database-backed market data service**:
+  - Stores candles in PostgreSQL + TimescaleDB hypertable
+  - Maintains a rolling window of `MAX_LOOKBACK_HOURS` for `MIN_TIMEFRAME` candles
+  - Syncs from Binance via CCXT (incremental, idempotent; prunes old candles)
+- **Scheduler + orchestration**:
+  - APScheduler-driven global tick (`GLOBAL_TICK`, e.g., every minute)
+  - Per-strategy timeframe alignment (execute only on timeframe boundaries)
+- **Strategy execution engine**:
+  - Loads enabled strategies from `strategies_registry.json`
+  - Loads base OHLCV once per tick, resamples per strategy timeframe, trims to each strategy’s `lookback_hours`
+  - Executes strategies in parallel (ThreadPoolExecutor) with per-strategy timeout isolation
+
+### Current outputs
+- Each strategy returns `StrategyRecommendation(signal, timestamp)` where signal is:
+  - `LONG`, `SHORT`, `FLAT`, or `HOLD`
+- Results are currently surfaced via console/log output (no persistent signal store yet).
+
+---
+
+## Shared strategy framework
+
+Current implemented strategies:
+- VolatilitySystem (ATR breakout)
+- SupertrendStrategy
+- OTTStrategy
+- BbandRsi
+- AwesomeMacd
+
+### Strategy Candidates
 
 1. **Technical strategies**  
    - Trend / Moving Averages
@@ -43,120 +103,56 @@ and, of course, exit existing positions.
    - Spikes in BTC mentions  
    - Basic positive/negative sentiment
 
-#### Strategies Already Selected for POC Implementation
+---
 
-1. **Volatility System (Technical / ATR-based)**
-The first strategy selected for implementation. Uses volatility expansion via resampled ATR and absolute price changes to detect breakout conditions.
-
-#### Tick & Timeframe Management
-
-- The system's global evaluation frequency is determined by MIN_TIMEFRAME, the shortest timeframe among all active strategies.
-- A global tick occurs every time a MIN_timeframe candle closes.
-- Each strategy receives a tick at every MIN interval, but:
-   - Strategies whose timeframe does not align with the current tick return HOLD / NO_ACTION (or similar neutral output).
-   - Strategies whose candle timeframe does align compute indicators and produce a signal.
-
-#### Centralized Data Management
-
-- The system stores only MIN_TIMEFRAME raw candles in the database (e.g., if the smallest strategy timeframe is 5m → store 5m candles).
-- Each strategy declares:
-   - Its timeframe (e.g., "1h", "15m").
-   - Its required lookback window (number of candles it needs in its own timeframe).
-- The system computes the total amount of raw candles to keep.
-- Before running any strategy:
-   - The Data Orchestrator loads the raw MIN candles from the DB.
-   - Resamples them to each strategy’s required timeframe.
-   - Extracts exactly lookback_n candles.
-
-### 2. RL-Based Decision Engine
-- Above the strategy services sits a **Reinforcement Learning (RL)** engine that chooses the final action.  
-- We will conduct a **dedicated research phase** to determine which **RL algorithm** (e.g., PPO, A2C, SAC, DDPG, etc.) best fits our problem characteristics and available data.  
-- A separate study will be performed on how to optimally define the **Action**, **State**, and **Reward** spaces to reflect real trading dynamics and avoid overfitting.  
-- The current plan is to use **FinRL** as the main RL framework, given its finance-oriented environments and built-in support for multiple algorithms.  
-- The RL environment will be customized so that its **observation** is essentially “what all strategies said right now” plus a few global fields (e.g., current position, volatility).  
-- The RL **action space** will be a **limited, predefined set** of actions (e.g., increase exposure, decrease exposure, stay flat, possibly reverse). We are **not** locking to “always buy/sell full position.”  
-- Whenever a **new strategy** is added to the system, the RL model will be **retrained** so it can learn all permutations/combinations of the available strategies.  
-- There will also be **periodic retraining** (daily/weekly) to re-align the meta-strategy with current market conditions.
-
-### 3. Exchange Integration
-- Actual order placement will be done via **CCXT**.
-- Primary exchange for now: **Kraken**.
-- Using CCXT keeps the system exchange-agnostic and lets us switch or add exchanges with minimal changes.
-- Trading is intended for **Bitcoin futures** to support long/short/flat flows.
-
-### 4. Runtime Environment
-- The **server-side part** of the project will run on **AWS**, most likely on a **Kubernetes cluster**.
-- Each trading strategy will run as its **own pod** (separate deployable unit), so strategies stay isolated and can be updated independently.
-- Strategy pods will be invoked **concurrently** to minimize latency in each decision cycle.
-- The **client-side part** is a separate desktop application (Java/JavaFX) that connects to the server-side services for monitoring and control.
-
-### 5. Client Application
-- A **desktop GUI** is planned, built in **Java / JavaFX**.
-- Purpose: monitor system state and executed actions; chart embedding is planned but not finalized yet (we may later feed Kraken data into the chart and overlay trades).
+## What is explicitly NOT implemented yet
+- Live trading / order execution
+- Position reconciliation against an exchange
+- Centralized persistence of decisions/trades in the runtime system
+- Full RL feature/state construction in the runtime system
+- Policy inference in the runtime system (actor loading + forward pass)
+- Risk management policy beyond what exists in the training environment
+- The server-side part of the project will run on AWS, most likely on a Kubernetes cluster
+- The client-side part is a separate desktop application (Java/JavaFX) that connects to the server-side services for monitoring and control.
 
 ---
 
-## Performance Considerations
-- We will use **multi-threading / concurrency** specifically for **invoking multiple strategy services in parallel**, so the meta-engine can get all recommendations in one time window.
-- The actual **RL decision** and **order execution** will remain controlled/sequential to keep consistency and avoid race conditions with real funds.
-
----
-
-## Not Yet Finalized
-- **Strategy output schema**: we know it must be unified, but exact fields (e.g. confidence, horizon) are not fixed yet.  
-- **RL research phase**: we will perform a dedicated research phase to determine which **Reinforcement Learning algorithm** (e.g., PPO, A2C, SAC, DDPG, etc.) best fits our trading framework.  
-- **RL environment design**: we will also study how to optimally define the **Action**, **State**, and **Reward** spaces to ensure effective learning and prevent overfitting.  
-- **Risk controls**: max position, daily loss caps, etc. have **not** been defined yet — this will be added once the basic loop runs.  
-
----
-
-## Technologies (current choice)
-- **Python** — strategy services and server-side logic
-- **FinRL** — main RL engine for training/decision learning
-- **CCXT** — exchange/execution layer (Kraken first)
-- **Java / JavaFX** — desktop client/GUI
-- **AWS** — hosting/running strategy services in parallel
-- **Kubernetes + Helm** — orchestration and packaging (one pod per strategy)
-- **GitHub Actions** — CI for building, testing, and publishing service images
-- **ArgoCD** — GitOps-based CD for deploying updated services to the Kubernetes cluster
-- **1Password** — secure storage and sharing of secrets, especially exchange API keys
+## Near-term roadmap (the “bridge” between codebases)
+1. **State parity:** build the exact RL state in the runtime system (same feature order + normalization + strategy encoding as training).
+2. **Model inference:** load the selected actor checkpoint (`act.pth`) and compute actions on each decision step.
+3. **Execution layer:** convert actions to real trades (planned: Kraken Futures via CCXT), including position/risk controls and order lifecycle.
+4. **Observability:** persist and monitor signals/actions/trades, health checks, and latency.
 
 ---
 
 ## Repository & Project Management (GitHub)
-- **GitHub Repositories** — Repository structure is still open (single monorepo vs. multiple repos).
-- **GitHub Projects / Issues** — for task management, backlog, and tracking new strategies to be onboarded.
-- **GitHub Actions (CI)** — automated builds, tests, linting, and container image creation on each push/PR.
-- **ArgoCD (CD)** — pulls from the GitHub repos and syncs to the Kubernetes cluster (GitOps flow).
+- **GitHub Repositories** — multiple repos
+- **GitHub Projects / Issues** — for task management, backlog
+- **GitHub Actions (CI)** — automated builds, tests
+- **ArgoCD (CD)** — pulls from the GitHub repos and syncs to the Kubernetes cluster (GitOps flow)
 
 ---
 
-## Algorithm POC Environment & Setup
-
-A Proof-of-Concept (POC) implementation of the algorithmic engine has begun.  
-The initial development environment and project structure are defined as follows:
-
-### Development Environment
-- **IDE:** PyCharm (Professional)
+## Development Environment
+- **IDE:** PyCharm (Professional), IntelliJ IDEA (Professional)
 - **Python Version:** 3.11.7  
-- **Virtual Environment:** `.venv` created and managed directly through PyCharm (no external conda/poetry).
-- **Dependency Policy:**  
-  - Install all packages via PyCharm’s package management GUI.  
-  - Avoid external environment managers unless required for production later on.
 
 ---
+
 ## Database Infrastructure
 
 - **PostgreSQL 16.11** with **TimescaleDB 2.23.1** extension
 - Time-series optimizations: hypertables, resampling, 90% compression
 - ACID-compliant for orders/metadata + time-series performance for OHLCV candles
 - Python: **psycopg2-binary 2.9.9**, **SQLAlchemy 2.0.23**
+
 ---
+
 ## Purpose of this Document
 This document is meant to give LLMs full context about:
-- what the project is trying to achieve,
-- what components already exist conceptually,
-- which tools/libraries have been chosen,
-- and which parts are intentionally *not* finalized yet.
+- what the project is trying to achieve
+- what components already exist conceptually
+- which tools/libraries have been chosen
+- and which parts are intentionally *not* finalized yet
 
 It should be used as a high-level description of the system’s architecture and intent, not as a final implementation spec.
